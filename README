@@ -8,8 +8,10 @@ Check out the repository from
 
   git@git.lsstcorp.org:LSST/DMS/devenv/devtools
 
-and place the 'bin' subdirectory on your path. Periodically update the tools
-with 'git pull' as needed.
+and set it up:
+    setup -r .
+
+Periodically update the tools with 'git pull' as needed.
 
 == git Workflow Utilities ==
 
