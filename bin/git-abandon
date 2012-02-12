@@ -1,0 +1,107 @@
+#!/bin/bash
+# git-abandon [options] <branch name>
+
+usage()
+{
+cat <<EOF
+usage: git abandon [options] <branch_name>
+
+Tag branch as abandoned. The <branch_name> must be the name of the remote
+branch, if it differs from the name of the local branch (unlikely in
+everyday use).
+
+Typical LSST use:
+    git abandon -m "{reason}; ticket closed." ticket/12345
+
+Options:
+    -n              dry run
+    -m <message>    tag message
+    -s              annotated and GPG-signed tag
+    -r <remote>     override remote (default is 'origin')
+    -d              delete remote branch
+    -h              help
+EOF
+}
+
+TAG_ARGS=()
+REMOTE=origin
+DRYRUN=""
+DELREMOTE=0
+while getopts 'dnm:r:sh' OPTION
+do
+	case $OPTION in
+	    h)
+		   usage
+		   exit 1
+		   ;;
+	    n)
+	           DRYRUN=echo
+	           ;;
+	    m)
+		   TAG_ARGS+=("-m" "$OPTARG")
+		   ;;
+	    r)
+		   REMOTE=$OPTARG
+		   ;;
+	    d)
+		   DELREMOTE=1
+		   ;;
+	    s)
+		   TAG_ARGS+=("-s")
+		   ;;
+	    ?)
+		   usage
+		   exit
+		   ;;
+	esac
+	shift $((OPTIND-1)); OPTIND=1
+done
+
+# "There can be only one"...
+if [[ -z $1 ]] || [[ ! -z $2 ]]
+then
+	usage
+	exit 1
+fi
+
+set -e									# stop on first error
+
+# Tag the branch with an abandonment marker tag
+TAGSHA1=$(git show-ref -d --tags "abandoned/$1" | tail -n 1 | cut -d' ' -f 1)
+if [ -z "$TAGSHA1" ]; then
+	$DRYRUN git tag -a "${TAG_ARGS[@]}" "abandoned/$1" "$REMOTE/$1" # tag the tip of the remote branch
+	$DRYRUN git push "$REMOTE" "refs/tags/abandoned/$1"		# push the new tag
+	TAGSHA1=$(git show-ref -s "refs/remotes/$REMOTE/$1")
+elif [ ${#TAG_ARGS[@]} -ne 0 ]; then
+	echo "Tag 'abandoned/$1' already exists; -m and -s options are disallowed."
+	exit 1;
+fi
+
+# Delete the remote branch
+if [ "x$DELREMOTE" == "x1" ]; then
+	# Sanity check: remote tip SHA1 must be == to tagged SHA1
+	$DRYRUN git fetch -q "$REMOTE" "refs/heads/$1"
+	TIPSHA1=$(git show-ref -s "refs/remotes/$REMOTE/$1")
+	if [ "x$TAGSHA1" != "x$TIPSHA1" ]; then
+		echo -n "Error: Tag 'abandoned/$name' doesn't point to the tip of "
+		echo "branch '$REMOTE/$1'. Someone continued developing on the branch?"
+		exit 1;
+	fi
+
+	$DRYRUN git push "$REMOTE" ":$1"			# delete the branch on the remote
+	$DRYRUN git remote prune "$REMOTE"			# prune the remote
+fi
+
+# Find any local branches tracking the abandoned branch and delete them
+git config --get-regexp 'branch.[^.]+.merge' "refs/heads/${1//./\\.}" |
+while read key there; do
+	here=$(echo "$key" | sed -n "s/branch.\(.*\).merge/\\1/p")
+
+	# Verify the local branch tracks the same remote
+	L_REMOTE=$(git config --get branch."$1".remote)
+	if [ "x$L_REMOTE" == "x$REMOTE" ]; then
+		# Switch to master if we're on the branch to be deleted
+		test x"$(git symbolic-ref HEAD)" == x"refs/heads/$here" && $DRYRUN git checkout master
+		$DRYRUN git branch -D "$here"
+	fi
+done
