@@ -1,0 +1,75 @@
+#!/bin/bash
+#
+# (Re)Configure commonly used LSST git settings
+#
+
+getinput()
+{
+	echo -n "$1 [$2]: "
+	while read X; do
+		test ! -z "$X" && break
+		test ! -z "$2" && break
+		echo "Please enter a value."
+		echo -n "$1 [$2]: "
+	done
+	test -z "$X" && INPUT="$2" || INPUT="$X"
+}
+
+runconfig()
+{
+	if [[ -z "$1" ]]; then
+		local DRYRUN=
+		local QT=
+	else
+		local DRYRUN="echo "
+		local QT='"'
+	fi
+	$DRYRUN git config --global user.name    $QT"$NAME"$QT
+	$DRYRUN git config --global user.email   $QT"$EMAIL"$QT
+	$DRYRUN git config --global push.default $QT"$PUSHDEFAULT"$QT
+	$DRYRUN git config --global color.ui     $QT"$COLORUI"$QT
+}
+
+set -e
+
+cat <<EOF
+
+Help set typical git-config options for LSST development.
+
+The options will be set globally (using git config --global). This means
+they will affect all your repositories.  If you don't want this, answer 'no'
+at the final prompt of this script and edit and run the outputed config
+commands manually.
+
+Some options may be presented with a default, shown in []. The default is
+either a) the current setting of the option in your global git configuration
+or b) the LSST-recommended setting for that option. Note that sometimes the
+recommended LSST setting *differs* from git's default setting (for example,
+LSST recommends setting push.default=tracking, while the git default is
+'current').
+
+It's safe to re-run this script, in the sense that it will never override
+(by offering a different defaul) an option you've already explicitly set in
+your global git config file.
+
+For more information on git config options, run 'git help config'.
+
+EOF
+
+getinput "Your name (First Last)"	"$(git config --global user.name)"                     && NAME=$INPUT
+getinput "Your e-mail"			"$(git config --global user.email)"                    && EMAIL=$INPUT
+getinput "Default git-push behavior"	"$(git config --global push.default || echo tracking)" && PUSHDEFAULT=$INPUT
+getinput "Colorize output (true/false)" "$(git config --global color.ui     || echo yes)"      && COLORUI=$INPUT
+
+echo
+echo "I am about to run:"
+echo
+runconfig 1
+echo
+getinput "Proceed (yes/no)?" "yes"
+if [ $INPUT == "yes" ]; then
+	runconfig
+	echo "git configuration saved."
+else
+	echo "cancelled."
+fi
