@@ -1,0 +1,14 @@
+#!/bin/bash
+#
+# A simple alias for 'ssh git@git.lsstcorp.org ...'
+#
+
+if [ $# -eq 0 ]; then
+	cat <<-EOF
+	usage: gitolite <server command>
+	See http://dev.lsstcorp.org/trac/wiki/GitDemoAndTutorial for details.
+	EOF
+	exit 1;
+fi
+
+ssh git@git.lsstcorp.org "$@"
