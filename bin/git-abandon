@@ -70,12 +70,18 @@ set -e									# stop on first error
 TAGSHA1=$(git show-ref -d --tags "abandoned/$1" | tail -n 1 | cut -d' ' -f 1)
 if [ -z "$TAGSHA1" ]; then
 	$DRYRUN git tag -a "${TAG_ARGS[@]}" "abandoned/$1" "$REMOTE/$1" # tag the tip of the remote branch
-	$DRYRUN git push "$REMOTE" "refs/tags/abandoned/$1"		# push the new tag
-	TAGSHA1=$(git show-ref -s "refs/remotes/$REMOTE/$1")
+	if [ -z $DRYRUN ]; then
+		TAGSHA1=$(git show-ref -s "refs/remotes/$REMOTE/$1")
+	fi
 elif [ ${#TAG_ARGS[@]} -ne 0 ]; then
 	echo "Tag 'abandoned/$1' already exists; -m and -s options are disallowed."
 	exit 1;
 fi
+
+# Push the abandonment marker tag upstream. Note: this _has_ to be here
+# and not in the above if [], to cover the case where the tag may have been
+# made locally, but never got pushed upstream (e.g., because of network issues)
+$DRYRUN git push "$REMOTE" "refs/tags/abandoned/$1"		# push the new tag
 
 # Delete the remote branch
 if [ "x$DELREMOTE" == "x1" ]; then
