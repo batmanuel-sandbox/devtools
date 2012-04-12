@@ -1,0 +1,133 @@
+#!/bin/bash
+
+: ${GITHUB_ORG:="LSST"}			# Name of the organization on github to which to upload
+P=$(dirname $0)				# Location of this script, used to find _github-json-to-variables helper
+
+function usage
+{
+cat <<-EOF
+	usage: git request-review <branch_name>
+
+	Open a github review request for merging of <branch_name> to master.
+	The master and ticket branches will be pushed to a github
+	repository, and a github pull request will be created.
+
+	The URL to the diff of the request will be returned.  E-mail this
+	URL to the reviewers to let them review your changes.
+EOF
+}
+
+function authenticate
+{
+	# Get the authentication token, or generate one if logging in for the first
+	# time. The token is stored in the users' global git-config file.
+
+	GITHUB_TOKEN=$(git config --global --get github-review.auth.token)
+	[ "$GITHUB_TOKEN" == "" ] && {
+		# Get user's github username/password
+		read -p "Github Username: " user
+		stty -echo
+		read -p "Github Password: " pass; echo
+		stty echo
+
+		# Get the new token
+		eval $(curl -u "$user:$pass" -i -s -XPOST "https://api.github.com/authorizations" -d '{"scopes": "repo"}' | $P/_github-json-to-variables)
+		if [ "$GITHUB_ERROR" == 1 ]; then
+			echo "Error obtaining authentication token; error message: $GH_message"
+			exit 1
+		fi
+
+		# Store the token for the future
+		GITHUB_TOKEN="$GH_token"
+		git config --global github-review.auth.token "$GITHUB_TOKEN"
+	}
+	export GITHUB_TOKEN
+}
+
+function github
+{
+	# Execute a github v3 API (http://developer.github.com/v3/) call.
+	#  github <VERB> <CMD_URL> [data]
+	# If verb == POST, data must be a JSON string to upload.
+
+	VERB=$1; shift
+	CMD=$1;  shift
+	DATA=$1; shift
+
+	# Erase any existing return variables (those matching GH_*)
+	unset $(export | awk -F = '{print $1}' | awk '{print $3'} | grep '^GH_.*$')
+
+	# Execute the command, return the JSON as GH_xxxx environment variables
+	if [ "$VERB" == GET ]; then
+		GITHUB_CMD="curl -i -s -H \"Authorization: token $GITHUB_TOKEN\" \"https://api.github.com/$CMD\""
+		eval $(curl -i -s -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/$CMD" | $P/_github-json-to-variables)
+	fi
+	if [ "$VERB" == POST ]; then
+		GITHUB_CMD="curl -i -s -H \"Authorization: token $GITHUB_TOKEN\" -XPOST \"https://api.github.com/$CMD\" -d \"$DATA\""
+		eval $(curl -i -s -H "Authorization: token $GITHUB_TOKEN" -XPOST "https://api.github.com/$CMD" -d "$DATA" | $P/_github-json-to-variables)
+	fi
+
+	test "$GITHUB_ERROR" == ""
+}
+
+function github_errmsg_die
+{
+	echo
+	echo =================================
+	echo $1
+	echo Error: $GITHUB_ERROR
+	echo Command: $GITHUB_CMD
+	echo More details:
+	export | grep GH_
+	echo =================================
+
+	exit -1
+}
+
+set -e
+
+# Check input
+[ $# == 1 ] || {
+	usage
+	exit -1;
+}
+
+TICKET="$1"
+git rev-parse "$TICKET" >/dev/null 2>&1 || {
+	echo "Ref $TICKET is unknown. Check spelling?"
+	exit -1
+}
+
+authenticate
+
+# Deduce destination repository name (github doesn't like slashes, so we replace them with -)
+REPO=$(git config --get remote.origin.url)
+REPO=${REPO/#*:/}		# Remove server name
+REPO=${REPO/#$GITHUB_ORG\//}	# Remove org name
+REPO=${REPO%.git}		# Remove .git suffix, if any
+REPO=${REPO//\//-}		# Replace slashes with -
+
+# Check if repo exists
+github GET "repos/$GITHUB_ORG/$REPO" || {
+	# Create repo
+	echo -n "Creating repository $REPO on github... "
+	github POST "orgs/$GITHUB_ORG/repos" "{\"name\": \"$REPO\"}" || {
+		github_errmsg_die "Failed to create repository"
+	}
+	echo "Done."
+	echo
+}
+
+# Push the master and ticket
+echo -n "Pushing master to github: ";  git push --force "git@github.com:/$GITHUB_ORG/$REPO" "master"; echo
+echo -n "Pushing $TICKET to github: "; git push --force "git@github.com:/$GITHUB_ORG/$REPO" "$TICKET"; echo
+
+# Create a pull request that will serve as a review request
+github POST "repos/$GITHUB_ORG/$REPO/pulls" '{"title": "Review request for '"$TICKET"'", "base": "master", "head": "'"$TICKET"'"}' || {
+	github_errmsg_die "Failed to create the pull request."
+}
+
+# Print out URL
+echo "Review request created."
+echo "View the visual diff at: https://github.com/$GITHUB_ORG/$REPO/pull/$GH_number/files"
+echo "View the raw   patch at: $GH_patch_url"

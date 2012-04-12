@@ -1,0 +1,47 @@
+#!/usr/bin/env python
+#
+# Note: Used by git-request-review. Not for manual use.
+#
+# Parse the output of "curl -i https://api.github.com/...." and output a
+# set of "export GH_xxx=yyy" statements corresponding to the returned JSON.
+#
+# git-request-review execs these.
+#
+
+import json, sys, pipes
+
+def export(self, prefix = 'GH'):
+	if type(self) is tuple:
+		print "export %s_%s=%s;" % (prefix, self[0], pipes.quote(str(self[1])))
+		return
+
+	for k, v in self.iteritems():
+		if type(v) == dict:
+			export(v, "%s_%s" % (prefix, k))
+		elif type(v) == list:
+			export((k, len(v)), prefix)	# List length
+			export(dict(enumerate(v)), "%s_%s" % (prefix, k))
+		else:
+			export((k, v), prefix)
+
+#
+# Check if we got a 2xx return code (success)
+#
+retcode = sys.stdin.readline();
+if retcode[:10] != "HTTP/1.1 2":
+	print "export GITHUB_ERROR=\"%s\";" % retcode[:-2]
+else:
+	print "unset GITHUB_ERROR;"
+while sys.stdin.readline() != "\r\n":
+	pass
+
+#
+# Slurp up and parse the returned JSON
+#
+try:
+	js = json.load(sys.stdin)
+except ValueError:
+	print "export GITHUB_ERROR=\"%s\";" % "Problem parsing returned JSON"
+	sys.exit(1)
+
+export(js)
