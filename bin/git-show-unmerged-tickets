@@ -8,12 +8,13 @@ parser.add_argument('--committer', '-c', type=str, default=None,
                     help='Only print branches matching this committer')
 parser.add_argument('--email', '-e', type=str, default=None,
                     help='Only print branches matching this email address')
-parser.add_argument('--regex', '-r', type=str, help='Only print branches matching this regex')
+parser.add_argument('--regex', type=str, help='Only print branches matching this regex')
+parser.add_argument('--remote', '-r', type=str, default='remote', help='Remote name for master')
 args = parser.parse_args()
 #
 # Find the unmerged branches
 #
-cmd = "git branch -r -v --no-merged origin/master"
+cmd = "git branch -r -v --no-merged %s/master" % args.remote
 
 branches = []
 p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
