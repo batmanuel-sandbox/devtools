@@ -1,0 +1,70 @@
+#!/usr/bin/env python
+
+import argparse, os, re, subprocess
+
+parser = argparse.ArgumentParser(description="List the branch commits that haven't been merged to HEAD")
+parser.add_argument('--abbrev', '-a', type=int, default=40, help='Number of characters to print from a SHA1')
+parser.add_argument('--committer', '-c', type=str, default=None,
+                    help='Only print branches matching this committer')
+parser.add_argument('--email', '-e', type=str, default=None,
+                    help='Only print branches matching this email address')
+parser.add_argument('--regex', '-r', type=str, help='Only print branches matching this regex')
+args = parser.parse_args()
+#
+# Find the unmerged branches
+#
+cmd = "git branch -r -v --no-merged origin/master"
+
+branches = []
+p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
+for line in p.stdout.readlines():
+    branch, sha1, comment = line.split(None, 2)
+
+    cmd = "git log -n 1 --format=format:'%%cN:%%cE' %s" % (sha1)
+    p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
+    committer, email = p.stdout.readline().split(":")
+
+    if args.committer and not re.search(args.committer, committer):
+        continue
+
+    if args.email and not re.search(args.email, email):
+        continue
+
+    if args.regex and not re.search(args.regex, branch):
+        continue
+
+    branches.append((branch, sha1, committer, email))
+#
+# Sort the branches
+#
+def cmpBranch(a, b):
+    """Sort branch names path-element by path-element, using a numerical comparison if possible"""
+    for a, b in zip(a[0].split('/'), b[0].split('/')):
+        if a == b:
+            continue
+
+        try:
+            return cmp(int(a), int(b))
+        except ValueError:
+            pass
+
+        return cmp(a, b)
+
+    return 0
+
+branches = sorted(branches, cmpBranch)
+#
+# Use git cherry to find the unmerged changesets
+#
+for i, descriptor in enumerate(branches):
+    branch, sha1, committer, email = descriptor
+    if i > 0:
+        print
+
+    print "%s %s <%s>" % (branch, committer, email)
+
+    cmd = "git cherry -v --abbrev=%d HEAD remotes/%s" % (args.abbrev, branch)
+    p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
+
+    for line in p.stdout.readlines():
+        print "  %s" % line.rstrip()
